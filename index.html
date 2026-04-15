@@ -266,6 +266,50 @@
       <div id="cat-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px"></div>
     </div>
   </div>
+
+  <!-- SUBMISSIONS TRACKER CHART -->
+  <div class="card" style="margin-top:20px" id="chart-card">
+    <div class="card-header">
+      <div>
+        <span class="card-title">📈 Monthly Submissions Tracker</span>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px" id="chart-sub">Stock IN vs Stock OUT — daily submission lines per month</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <select class="inp" id="chart-month-sel" onchange="onChartMonthChange()" style="font-size:12px;padding:5px 10px">
+        </select>
+        <div style="display:flex;align-items:center;gap:14px">
+          <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)">
+            <span style="width:24px;height:3px;background:var(--green);display:inline-block;border-radius:2px"></span>Stock IN
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)">
+            <span style="width:24px;height:3px;background:var(--red);display:inline-block;border-radius:2px"></span>Stock OUT
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)">
+            <span style="width:24px;height:3px;background:var(--blue);display:inline-block;border-radius:2px;border-top:2px dashed var(--blue)"></span>Total
+          </span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadChartData()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:16px 20px">
+      <!-- Month summary tiles -->
+      <div id="chart-month-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px"></div>
+      <!-- Canvas chart -->
+      <div style="position:relative;width:100%;height:260px">
+        <canvas id="submissions-chart" style="width:100%;height:100%"></canvas>
+        <div id="chart-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px">
+          Loading chart data...
+        </div>
+        <div id="chart-tooltip" style="position:absolute;display:none;background:var(--navy);color:#fff;padding:8px 12px;border-radius:var(--r);font-size:12px;pointer-events:none;box-shadow:var(--shadow2);min-width:140px;z-index:10"></div>
+      </div>
+      <!-- Month-by-month summary bar -->
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">All Months Overview</div>
+        <div id="month-bars" style="display:flex;gap:6px;align-items:flex-end;height:60px;overflow-x:auto;padding-bottom:4px"></div>
+        <div id="month-bar-labels" style="display:flex;gap:6px;margin-top:4px;overflow-x:auto"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════════ STOCK IN ══════════════ -->
@@ -575,6 +619,7 @@ async function init() {
     renderDashboard();
     document.getElementById('dash-sub').textContent =
       ITEMS.length + ' items loaded · ' + fmtTs(new Date());
+    loadChartData(); // load chart in background after dashboard renders
   } catch(err) {
     setConn('offline');
     toast('Cannot reach Google Sheets: ' + err.message, 'error');
@@ -699,6 +744,7 @@ async function refreshDashboard() {
     if (!d.ok) throw new Error(d.error);
     ITEMS = d.items;
     renderDashboard();
+    loadChartData();
     document.getElementById('dash-sub').textContent = ITEMS.length + ' items · refreshed ' + fmtTs(new Date());
     toast('Dashboard refreshed', 'success');
   } catch(err) { toast('Refresh failed: ' + err.message, 'error'); }
@@ -1397,6 +1443,349 @@ function shortLocation(loc) {
 }
 
 // ══════════════════════════════════════════════════════
+// SUBMISSIONS CHART
+// ══════════════════════════════════════════════════════
+let CHART_DATA    = [];   // array of month objects from GAS
+let CHART_MONTH   = '';   // currently selected YYYY-MM
+let chartAnimFrame = null;
+
+async function loadChartData() {
+  document.getElementById('chart-loading').style.display = 'flex';
+  document.getElementById('chart-loading').textContent   = 'Loading chart data...';
+  try {
+    const d = await gasCall({ action: 'getChartData' });
+    if (!d.ok) throw new Error(d.error);
+    CHART_DATA  = d.months || [];
+    CHART_MONTH = d.currentMonth || '';
+
+    // Populate month selector
+    const sel = document.getElementById('chart-month-sel');
+    sel.innerHTML = CHART_DATA.map(m =>
+      `<option value="${m.month}" ${m.month === CHART_MONTH ? 'selected' : ''}>${m.label}</option>`
+    ).join('');
+
+    document.getElementById('chart-loading').style.display = 'none';
+    renderChart();
+    renderMonthBars();
+  } catch(err) {
+    document.getElementById('chart-loading').textContent = 'Chart data unavailable — ' + err.message;
+  }
+}
+
+function onChartMonthChange() {
+  CHART_MONTH = document.getElementById('chart-month-sel').value;
+  renderChart();
+}
+
+function renderChart() {
+  const monthObj = CHART_DATA.find(m => m.month === CHART_MONTH);
+  if (!monthObj) return;
+
+  // Update sub-label
+  document.getElementById('chart-sub').textContent =
+    'Daily submissions for ' + monthObj.label + ' — Stock IN vs Stock OUT';
+
+  // Month summary tiles
+  const totalAll = monthObj.totalIn + monthObj.totalOut;
+  const activeDays = monthObj.days.filter(d => d.total > 0).length;
+  const peakDay = monthObj.days.reduce((best, d) => d.total > (best ? best.total : -1) ? d : best, null);
+  document.getElementById('chart-month-stats').innerHTML = `
+    <div style="background:var(--surface2);border-radius:var(--r);padding:12px 14px;border:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Total Submissions</div>
+      <div style="font-size:22px;font-weight:700;font-family:'DM Mono',monospace;color:var(--navy)">${totalAll}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">${monthObj.label}</div>
+    </div>
+    <div style="background:var(--green-bg);border-radius:var(--r);padding:12px 14px;border:1px solid rgba(42,124,82,0.15)">
+      <div style="font-size:10px;font-weight:600;color:var(--green);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Stock Received</div>
+      <div style="font-size:22px;font-weight:700;font-family:'DM Mono',monospace;color:var(--green)">${monthObj.totalIn}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">line entries</div>
+    </div>
+    <div style="background:var(--red-bg);border-radius:var(--r);padding:12px 14px;border:1px solid rgba(192,57,43,0.15)">
+      <div style="font-size:10px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Stock Issued</div>
+      <div style="font-size:22px;font-weight:700;font-family:'DM Mono',monospace;color:var(--red)">${monthObj.totalOut}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">line entries</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:var(--r);padding:12px 14px;border:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Active Days</div>
+      <div style="font-size:22px;font-weight:700;font-family:'DM Mono',monospace;color:var(--navy)">${activeDays}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">days with activity</div>
+    </div>
+    <div style="background:var(--blue-bg);border-radius:var(--r);padding:12px 14px;border:1px solid rgba(37,99,168,0.15)">
+      <div style="font-size:10px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Peak Day</div>
+      <div style="font-size:22px;font-weight:700;font-family:'DM Mono',monospace;color:var(--blue)">${peakDay && peakDay.total > 0 ? peakDay.total : '—'}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">${peakDay && peakDay.total > 0 ? 'Day ' + parseInt(peakDay.day) : 'no activity'}</div>
+    </div>
+  `;
+
+  // Draw canvas
+  drawLineChart(monthObj);
+}
+
+function drawLineChart(monthObj) {
+  const canvas  = document.getElementById('submissions-chart');
+  const wrapper = canvas.parentElement;
+  const dpr     = window.devicePixelRatio || 1;
+  const W       = wrapper.clientWidth;
+  const H       = 260;
+
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const days = monthObj.days;
+  if (!days.length) return;
+
+  // Resolve CSS vars
+  const cs       = getComputedStyle(document.documentElement);
+  const cGreen   = '#2a7c52';
+  const cRed     = '#c0392b';
+  const cBlue    = '#2563a8';
+  const cBorder  = '#e2ddd6';
+  const cText3   = '#9a9590';
+  const cText2   = '#5a5650';
+  const cSurface = '#ffffff';
+
+  // Padding
+  const PAD = { top: 16, right: 24, bottom: 36, left: 40 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top  - PAD.bottom;
+
+  // Max value for Y axis
+  const maxVal = Math.max(
+    ...days.map(d => Math.max(d.in, d.out, d.total)),
+    1
+  );
+  const yMax = Math.ceil(maxVal / 2) * 2 + 2; // round up to even + buffer
+
+  // Scale helpers
+  const xScale = i => PAD.left + (i / (days.length - 1 || 1)) * chartW;
+  const yScale = v => PAD.top + chartH - (v / yMax) * chartH;
+
+  // ── Grid lines ──────────────────────────────────────────
+  const ySteps = Math.min(yMax, 6);
+  ctx.strokeStyle = cBorder;
+  ctx.lineWidth   = 1;
+  for (let s = 0; s <= ySteps; s++) {
+    const v = Math.round((yMax / ySteps) * s);
+    const y = yScale(v);
+    ctx.beginPath();
+    ctx.setLineDash([3, 4]);
+    ctx.moveTo(PAD.left, y);
+    ctx.lineTo(W - PAD.right, y);
+    ctx.stroke();
+    // Y axis label
+    ctx.fillStyle   = cText3;
+    ctx.font        = '10px DM Mono, monospace';
+    ctx.textAlign   = 'right';
+    ctx.fillText(v, PAD.left - 6, y + 3.5);
+  }
+  ctx.setLineDash([]);
+
+  // ── X axis labels (every ~5 days) ───────────────────────
+  ctx.fillStyle = cText3;
+  ctx.font      = '10px DM Mono, monospace';
+  ctx.textAlign = 'center';
+  const labelEvery = days.length > 20 ? 5 : days.length > 10 ? 3 : 1;
+  days.forEach((d, i) => {
+    if (i % labelEvery === 0 || i === days.length - 1) {
+      ctx.fillText(parseInt(d.day), xScale(i), H - PAD.bottom + 14);
+    }
+  });
+
+  // ── Axis border ──────────────────────────────────────────
+  ctx.strokeStyle = cBorder;
+  ctx.lineWidth   = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(PAD.left, PAD.top);
+  ctx.lineTo(PAD.left, H - PAD.bottom);
+  ctx.lineTo(W - PAD.right, H - PAD.bottom);
+  ctx.stroke();
+
+  // ── Today marker ────────────────────────────────────────
+  const nowDay = String(new Date().getDate()).padStart(2, '0');
+  const todayIdx = days.findIndex(d => d.day === nowDay);
+  if (todayIdx >= 0 && monthObj.month === CHART_MONTH) {
+    const tx = xScale(todayIdx);
+    ctx.strokeStyle = 'rgba(184,146,46,0.5)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(tx, PAD.top);
+    ctx.lineTo(tx, H - PAD.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#b8922e';
+    ctx.font      = '9px DM Sans, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Today', tx, PAD.top - 3);
+  }
+
+  // ── Draw line helper ─────────────────────────────────────
+  function drawLine(series, color, lineW, dashed) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = lineW;
+    ctx.lineJoin    = 'round';
+    ctx.lineCap     = 'round';
+    if (dashed) ctx.setLineDash([5, 4]); else ctx.setLineDash([]);
+    ctx.beginPath();
+    let started = false;
+    days.forEach((d, i) => {
+      const x = xScale(i);
+      const y = yScale(d[series]);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ── Fill area under IN line ──────────────────────────────
+  ctx.beginPath();
+  days.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.in);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xScale(days.length - 1), H - PAD.bottom);
+  ctx.lineTo(xScale(0), H - PAD.bottom);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(42,124,82,0.07)';
+  ctx.fill();
+
+  // ── Fill area under OUT line ─────────────────────────────
+  ctx.beginPath();
+  days.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.out);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xScale(days.length - 1), H - PAD.bottom);
+  ctx.lineTo(xScale(0), H - PAD.bottom);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(192,57,43,0.06)';
+  ctx.fill();
+
+  // ── Draw lines ───────────────────────────────────────────
+  drawLine('total', cBlue,  1.5, true);
+  drawLine('in',    cGreen, 2.5, false);
+  drawLine('out',   cRed,   2.5, false);
+
+  // ── Dots on data points ──────────────────────────────────
+  function drawDots(series, color) {
+    days.forEach((d, i) => {
+      if (d[series] > 0) {
+        const x = xScale(i), y = yScale(d[series]);
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle   = color;
+        ctx.fill();
+        ctx.strokeStyle = cSurface;
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+      }
+    });
+  }
+  drawDots('in',  cGreen);
+  drawDots('out', cRed);
+
+  // ── Tooltip on mousemove ─────────────────────────────────
+  canvas.onmousemove = function(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mx   = e.clientX - rect.left;
+    const my   = e.clientY - rect.top;
+
+    // Find nearest day
+    let nearest = -1, nearDist = Infinity;
+    days.forEach((d, i) => {
+      const dist = Math.abs(xScale(i) - mx);
+      if (dist < nearDist) { nearDist = dist; nearest = i; }
+    });
+
+    const tip = document.getElementById('chart-tooltip');
+    if (nearest >= 0 && nearDist < 30 && my >= PAD.top && my <= H - PAD.bottom) {
+      const d   = days[nearest];
+      const x   = xScale(nearest);
+      const dayNum = parseInt(d.day);
+      const [y, mo] = CHART_MONTH.split('-').map(Number);
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      tip.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:5px">${dayNum} ${MONTHS[mo-1]} ${y}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="width:8px;height:8px;background:#4ade80;border-radius:50%;display:inline-block"></span>
+          Stock IN: <strong>${d.in}</strong>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="width:8px;height:8px;background:#f87171;border-radius:50%;display:inline-block"></span>
+          Stock OUT: <strong>${d.out}</strong>
+        </div>
+        <div style="border-top:1px solid rgba(255,255,255,0.2);margin-top:5px;padding-top:4px;font-weight:600">
+          Total: ${d.total}
+        </div>`;
+      const tipW = 150;
+      let tx = x + 12;
+      if (tx + tipW > W - PAD.right) tx = x - tipW - 12;
+      tip.style.left    = tx + 'px';
+      tip.style.top     = Math.max(PAD.top, yScale(d.total) - 10) + 'px';
+      tip.style.display = 'block';
+    } else {
+      tip.style.display = 'none';
+    }
+  };
+  canvas.onmouseleave = () => {
+    document.getElementById('chart-tooltip').style.display = 'none';
+  };
+}
+
+function renderMonthBars() {
+  if (!CHART_DATA.length) return;
+
+  const maxTotal = Math.max(...CHART_DATA.map(m => m.totalIn + m.totalOut), 1);
+  const BAR_H    = 52; // max bar height px
+  const MONTHS   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const barsDiv   = document.getElementById('month-bars');
+  const labelsDiv = document.getElementById('month-bar-labels');
+
+  barsDiv.innerHTML = CHART_DATA.map(m => {
+    const total   = m.totalIn + m.totalOut;
+    const h       = Math.max(Math.round((total / maxTotal) * BAR_H), total > 0 ? 3 : 0);
+    const isActive = m.month === CHART_MONTH;
+    const [, mo]  = m.month.split('-').map(Number);
+    const color   = isActive ? 'var(--navy)' : 'var(--border2)';
+    return `<div title="${m.label}: ${m.totalIn} IN, ${m.totalOut} OUT"
+      onclick="selectChartMonth('${m.month}')"
+      style="flex:1;min-width:28px;max-width:48px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:pointer;gap:2px">
+      <div style="font-size:9px;font-family:'DM Mono',monospace;color:${isActive?'var(--navy)':'var(--text3)'}">
+        ${total > 0 ? total : ''}
+      </div>
+      <div style="width:100%;background:${color};border-radius:3px 3px 0 0;height:${h}px;transition:background 0.15s"></div>
+    </div>`;
+  }).join('');
+
+  labelsDiv.innerHTML = CHART_DATA.map(m => {
+    const [y, mo] = m.month.split('-').map(Number);
+    const isActive = m.month === CHART_MONTH;
+    return `<div onclick="selectChartMonth('${m.month}')"
+      style="flex:1;min-width:28px;max-width:48px;text-align:center;font-size:9px;
+      color:${isActive?'var(--navy)':'var(--text3)'};font-weight:${isActive?'700':'400'};
+      cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+      ${MONTHS[mo-1]}<br><span style="font-size:8px">${String(y).slice(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+function selectChartMonth(month) {
+  CHART_MONTH = month;
+  document.getElementById('chart-month-sel').value = month;
+  renderChart();
+  renderMonthBars();
+}
+
+// ══════════════════════════════════════════════════════
 // Clock
 function tick() {
   document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{
@@ -1408,6 +1797,9 @@ tick(); setInterval(tick, 30000);
 // ══════════════════════════════════════════════════════
 // START
 // ══════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+  if (CHART_DATA.length) renderChart();
+});
 init();
 </script>
 </body>
