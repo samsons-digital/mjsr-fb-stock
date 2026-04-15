@@ -185,6 +185,15 @@
     .form-grid{grid-template-columns:1fr}
     .in-line,.out-line{grid-template-columns:1fr 1fr auto}
   }
+
+  /* SUBMISSIONS LOG TAB BUTTONS */
+  .sub-tab-btn{padding:7px 16px;border-radius:var(--r);font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border2);background:var(--surface);color:var(--text2);transition:all 0.15s;font-family:'DM Sans',sans-serif}
+  .sub-tab-btn:hover{background:var(--bg);color:var(--navy)}
+  .sub-tab-btn.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+  /* COMPLIANCE ROW HIGHLIGHT */
+  .row-in td{border-left:3px solid var(--green)}
+  .row-out td:first-child{border-left:3px solid var(--red)}
 </style>
 </head>
 <body>
@@ -214,7 +223,8 @@
   <button class="nav-btn" onclick="showPage('stock-in',this)">📥 Receive Stock</button>
   <button class="nav-btn" onclick="showPage('stock-out',this)">📤 Issue Stock</button>
   <button class="nav-btn" onclick="showPage('inventory',this)">📦 Inventory</button>
-  <button class="nav-btn" onclick="showPage('log',this)">📋 Audit Log</button>
+  <button class="nav-btn" onclick="showPage('submissions',this)">📋 Submissions Log</button>
+  <button class="nav-btn" onclick="showPage('log',this)">🔍 Audit Log</button>
 </nav>
 
 <main>
@@ -392,6 +402,101 @@
   </div>
 </div>
 
+<!-- ══════════════ SUBMISSIONS LOG ══════════════ -->
+<div id="page-submissions" class="page">
+  <div class="section-title">Submissions Log</div>
+  <div class="section-sub" id="sub-log-sub">Complete compliance record of all stock submissions</div>
+
+  <!-- Summary Stats -->
+  <div class="stat-grid" id="sub-stat-grid" style="margin-bottom:20px"></div>
+
+  <!-- Tab switcher -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+    <button class="sub-tab-btn active" id="subtab-all"   onclick="setSubTab('all',this)">All Submissions</button>
+    <button class="sub-tab-btn" id="subtab-in"    onclick="setSubTab('in',this)">📥 Stock Received</button>
+    <button class="sub-tab-btn" id="subtab-out"   onclick="setSubTab('out',this)">📤 Stock Issued</button>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn btn-outline btn-sm" onclick="loadSubmissionsLog()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="margin-bottom:0">
+    <div class="filter-row">
+      <input type="text" class="inp" id="sub-search" placeholder="🔍 Search item, supplier, outlet, staff..." oninput="renderSubmissions()" style="min-width:240px">
+      <select class="inp" id="sub-outlet" onchange="renderSubmissions()">
+        <option value="">All Outlets</option>
+        <option>Lazeez Restaurant</option>
+        <option>Food Court</option>
+        <option>Top Station Restaurant</option>
+        <option>Green Valley</option>
+        <option>Samsons Inn Hotel</option>
+      </select>
+      <select class="inp" id="sub-location" onchange="renderSubmissions()">
+        <option value="">All Store Rooms</option>
+        <option>Main Dry Store (Back of Admin Building)</option>
+        <option>Freezer Store (Near Medic Building)</option>
+        <option>Chiller Store (Back of Lazeez)</option>
+      </select>
+      <input type="date" class="inp" id="sub-from" onchange="renderSubmissions()">
+      <input type="date" class="inp" id="sub-to"   onchange="renderSubmissions()">
+      <button class="btn btn-outline btn-sm" onclick="clearSubFilters()">Clear</button>
+      <span id="sub-count" style="font-size:12px;color:var(--text3);margin-left:auto;white-space:nowrap"></span>
+    </div>
+
+    <!-- Stock IN table -->
+    <div id="sub-in-section">
+      <div style="padding:12px 16px 8px;font-size:12px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:0.6px;background:var(--green-bg);border-bottom:1px solid var(--border)">
+        📥 Stock Received
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Submitted At</th>
+            <th>Receive Date</th>
+            <th>GRN / Invoice</th>
+            <th>Item</th>
+            <th>Type</th>
+            <th>Qty Received</th>
+            <th>Unit</th>
+            <th>Supplier</th>
+            <th>Store Room</th>
+            <th>Received By</th>
+            <th>Remarks</th>
+          </tr></thead>
+          <tbody id="sub-in-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Stock OUT table -->
+    <div id="sub-out-section">
+      <div style="padding:12px 16px 8px;font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:0.6px;background:var(--red-bg);border-bottom:1px solid var(--border);border-top:2px solid var(--border)">
+        📤 Stock Issued
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>Submitted At</th>
+            <th>Issue Date</th>
+            <th>Item</th>
+            <th>Type</th>
+            <th>Qty Issued</th>
+            <th>Unit</th>
+            <th>Outlet</th>
+            <th>Store Room</th>
+            <th>Approved By</th>
+            <th>Issued By</th>
+            <th>Purpose</th>
+          </tr></thead>
+          <tbody id="sub-out-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- ══════════════ AUDIT LOG ══════════════ -->
 <div id="page-log" class="page">
   <div class="section-title">Audit Log</div>
@@ -489,6 +594,7 @@ function showPage(page, btn) {
   if (btn) btn.classList.add('active');
   if (page === 'inventory') loadInventory();
   if (page === 'log') loadAuditLog();
+  if (page === 'submissions') loadSubmissionsLog();
 }
 
 // ══════════════════════════════════════════════════════
@@ -1088,6 +1194,209 @@ function setBtn(id, disabled, label) {
   b.textContent = label;
 }
 
+// Clock
+function tick() {
+  document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{
+    weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'
+  });
+}
+tick(); setInterval(tick, 30000);
+
+// ══════════════════════════════════════════════════════
+// SUBMISSIONS LOG
+// ══════════════════════════════════════════════════════
+let SUB_IN  = [];   // raw Stock_IN rows
+let SUB_OUT = [];   // raw Stock_OUT rows
+let subTab  = 'all';
+
+async function loadSubmissionsLog() {
+  document.getElementById('sub-log-sub').textContent = 'Loading from Google Sheets...';
+  showLoading('Loading submissions log...');
+  try {
+    const d = await gasCall({ action: 'getSubmissionsLog', limit: 500 });
+    if (!d.ok) throw new Error(d.error);
+    SUB_IN  = d.stockIn  || [];
+    SUB_OUT = d.stockOut || [];
+    document.getElementById('sub-log-sub').textContent =
+      (SUB_IN.length + SUB_OUT.length) + ' submissions loaded · ' + fmtTs(new Date());
+    renderSubStats();
+    renderSubmissions();
+    toast('Submissions log loaded', 'success');
+  } catch(err) {
+    document.getElementById('sub-log-sub').textContent = 'Load failed — ' + err.message;
+    toast('Submissions log failed: ' + err.message, 'error');
+  }
+  hideLoading();
+}
+
+function renderSubStats() {
+  const totalIn   = SUB_IN.length;
+  const totalOut  = SUB_OUT.length;
+  const qtyIn     = SUB_IN.reduce((s,r)  => s + (parseFloat(r.qty)||0), 0);
+  const qtyOut    = SUB_OUT.reduce((s,r) => s + (parseFloat(r.qty)||0), 0);
+
+  // Unique submitters
+  const staff = new Set([
+    ...SUB_IN.map(r => r.by),
+    ...SUB_OUT.map(r => r.by)
+  ]);
+
+  // Today's submissions
+  const todayStr = today();
+  const todayIn  = SUB_IN.filter(r  => (r.date||'').startsWith(todayStr)).length;
+  const todayOut = SUB_OUT.filter(r => (r.date||'').startsWith(todayStr)).length;
+
+  document.getElementById('sub-stat-grid').innerHTML = `
+    <div class="stat-card" style="--accent:var(--navy)">
+      <div class="stat-label">Total Submissions</div>
+      <div class="stat-value">${totalIn + totalOut}</div>
+      <div class="stat-sub">${totalIn} received · ${totalOut} issued</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--green)">
+      <div class="stat-label">Stock IN Lines</div>
+      <div class="stat-value" style="color:var(--green)">${totalIn}</div>
+      <div class="stat-sub">Total qty: ${fn(qtyIn)} units</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--red)">
+      <div class="stat-label">Stock OUT Lines</div>
+      <div class="stat-value" style="color:var(--red)">${totalOut}</div>
+      <div class="stat-sub">Total qty: ${fn(qtyOut)} units</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--blue)">
+      <div class="stat-label">Today's Activity</div>
+      <div class="stat-value" style="color:var(--blue)">${todayIn + todayOut}</div>
+      <div class="stat-sub">${todayIn} in · ${todayOut} out today</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--gold)">
+      <div class="stat-label">Active Staff</div>
+      <div class="stat-value" style="color:var(--gold)">${staff.size}</div>
+      <div class="stat-sub">Unique submitters</div>
+    </div>
+  `;
+}
+
+function setSubTab(tab, btn) {
+  subTab = tab;
+  document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderSubmissions();
+}
+
+function renderSubmissions() {
+  const search   = (document.getElementById('sub-search').value  || '').toLowerCase();
+  const outlet   = document.getElementById('sub-outlet').value;
+  const location = document.getElementById('sub-location').value;
+  const from     = document.getElementById('sub-from').value;
+  const to       = document.getElementById('sub-to').value;
+
+  // Show/hide sections based on tab
+  const showIn  = subTab === 'all' || subTab === 'in';
+  const showOut = subTab === 'all' || subTab === 'out';
+  document.getElementById('sub-in-section').style.display  = showIn  ? '' : 'none';
+  document.getElementById('sub-out-section').style.display = showOut ? '' : 'none';
+
+  // Filter IN rows
+  const filteredIn = SUB_IN.filter(r => {
+    if (!showIn) return false;
+    const d = r.date || '';
+    if (from && d < from) return false;
+    if (to   && d > to)   return false;
+    if (location && r.location !== location) return false;
+    if (search && !r.item.toLowerCase().includes(search) &&
+        !r.supplier.toLowerCase().includes(search) &&
+        !(r.by||'').toLowerCase().includes(search) &&
+        !(r.grn||'').toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  // Filter OUT rows
+  const filteredOut = SUB_OUT.filter(r => {
+    if (!showOut) return false;
+    const d = r.date || '';
+    if (from && d < from) return false;
+    if (to   && d > to)   return false;
+    if (outlet   && r.outlet   !== outlet)   return false;
+    if (location && r.location !== location) return false;
+    if (search && !r.item.toLowerCase().includes(search) &&
+        !r.outlet.toLowerCase().includes(search) &&
+        !(r.by||'').toLowerCase().includes(search) &&
+        !(r.approvedBy||'').toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  const total = filteredIn.length + filteredOut.length;
+  document.getElementById('sub-count').textContent = total + ' record' + (total!==1?'s':'');
+
+  // Render IN table
+  const inTbody = document.getElementById('sub-in-tbody');
+  if (!showIn) {
+    inTbody.innerHTML = '';
+  } else if (filteredIn.length === 0) {
+    inTbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text3)">
+      No stock received records match your filters</td></tr>`;
+  } else {
+    inTbody.innerHTML = filteredIn.map(r => {
+      const item = ITEMS.find(i => i.name === r.item);
+      return `<tr class="row-in">
+        <td class="num" style="font-size:11px;color:var(--text2)">${fmtTs(new Date(r.ts))}</td>
+        <td class="num">${fmtDate(r.date)}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">${r.grn||'—'}</td>
+        <td style="font-weight:500">${r.item}</td>
+        <td>${item ? typeTag(item.type) : ''}</td>
+        <td class="num" style="color:var(--green);font-weight:600">+${fn(r.qty)}</td>
+        <td>${r.unit}</td>
+        <td>${r.supplier||'—'}</td>
+        <td style="font-size:11px;color:var(--text2)">${shortLocation(r.location)}</td>
+        <td>${r.by||'—'}</td>
+        <td style="font-size:11px;color:var(--text2)">${r.remarks||'—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Render OUT table
+  const outTbody = document.getElementById('sub-out-tbody');
+  if (!showOut) {
+    outTbody.innerHTML = '';
+  } else if (filteredOut.length === 0) {
+    outTbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text3)">
+      No stock issued records match your filters</td></tr>`;
+  } else {
+    outTbody.innerHTML = filteredOut.map(r => {
+      const item = ITEMS.find(i => i.name === r.item);
+      return `<tr class="row-out">
+        <td class="num" style="font-size:11px;color:var(--text2)">${fmtTs(new Date(r.ts))}</td>
+        <td class="num">${fmtDate(r.date)}</td>
+        <td style="font-weight:500">${r.item}</td>
+        <td>${item ? typeTag(item.type) : ''}</td>
+        <td class="num" style="color:var(--red);font-weight:600">-${fn(r.qty)}</td>
+        <td>${r.unit}</td>
+        <td><span style="font-weight:500">${r.outlet||'—'}</span></td>
+        <td style="font-size:11px;color:var(--text2)">${shortLocation(r.location)}</td>
+        <td>${r.approvedBy||'—'}</td>
+        <td>${r.by||'—'}</td>
+        <td style="font-size:11px;color:var(--text2)">${r.purpose||r.remarks||'—'}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+function clearSubFilters() {
+  ['sub-search','sub-outlet','sub-location','sub-from','sub-to'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  renderSubmissions();
+}
+
+// Shorten long location names for table display
+function shortLocation(loc) {
+  if (!loc) return '—';
+  if (loc.includes('Main Dry'))  return 'Main Dry Store';
+  if (loc.includes('Freezer'))   return 'Freezer Store';
+  if (loc.includes('Chiller'))   return 'Chiller Store';
+  return loc;
+}
+
+// ══════════════════════════════════════════════════════
 // Clock
 function tick() {
   document.getElementById('clock').textContent = new Date().toLocaleString('en-GB',{
