@@ -1151,7 +1151,7 @@ function renderInventory() {
 async function loadAuditLog() {
   showLoading('Loading audit log...');
   try {
-    const d = await gasCall({ action: 'getLog', limit: 300 });
+    const d = await gasCall({ action: 'getAuditLog', limit: 300 });
     if (!d.ok) throw new Error(d.error);
     LOG = d.log || [];
     renderLog();
@@ -1268,10 +1268,10 @@ async function submitStockIn() {
     });
     if (!d.ok) throw new Error(d.error);
 
-    // Update local ITEMS balances
+    // Refresh ITEMS from server to get ledger-accurate balances
     lines.forEach(ln => {
       const item = ITEMS.find(i => i.name === ln.item);
-      if (item) { item.stockIn += ln.qty; item.currentStock += ln.qty; }
+      if (item) { item.currentStock = Math.round((item.currentStock + ln.qty) * 1000) / 1000; }
     });
 
     // Add to session log
@@ -1284,6 +1284,8 @@ async function submitStockIn() {
     toast('Receipt posted to Sheets', 'success');
     resetInForm();
     renderInLog();
+    // Refresh inventory from ledger in background
+    gasCall({ action: 'getInitData' }).then(r => { if(r.ok) ITEMS = r.items; }).catch(()=>{});
   } catch(err) {
     showAlert('in-alert', 'Post failed: ' + err.message, 'error');
     toast('Post failed: ' + err.message, 'error');
@@ -1387,8 +1389,7 @@ async function submitStockOut() {
     lines.forEach(ln => {
       const item = ITEMS.find(i => i.name === ln.item);
       if (item) {
-        item.stockOut = (item.stockOut||0) + ln.qty;
-        item.currentStock -= ln.qty;
+        item.currentStock = Math.round((item.currentStock - ln.qty) * 1000) / 1000;
         if (parStatus(item.currentStock, item.minPar) === 'CRITICAL') {
           toast(`⚠️ ${ln.item} now below par!`, 'warning');
         }
@@ -1403,6 +1404,8 @@ async function submitStockOut() {
     toast(`Issued to ${outlet}`, 'success');
     resetOutForm();
     renderOutLog();
+    // Refresh from ledger in background
+    gasCall({ action: 'getInitData' }).then(r => { if(r.ok) ITEMS = r.items; }).catch(()=>{});
   } catch(err) {
     showAlert('out-alert', 'Post failed: ' + err.message, 'error');
     toast('Post failed: ' + err.message, 'error');
@@ -2314,25 +2317,22 @@ async function submitEditItem() {
     });
     if (!d.ok) throw new Error(d.error);
 
-    // Use the confirmed newBalance from GAS — this is what was actually
-    // written directly to Live_Stock_Balance, so it's the ground truth.
-    const localItem = ITEMS.find(i => i.name === item.name);
-    if (localItem) {
-      localItem.name    = name;
-      localItem.type    = type;
-      localItem.unit    = unit;
-      localItem.minPar  = par;
-      localItem.storage = storage;
-      // If GAS returned a confirmed newBalance, use it. Otherwise calculate locally.
-      if (adjType && d.newBalance !== undefined) {
-        localItem.currentStock = d.newBalance;
-      } else if (adjType === 'SET')      { localItem.currentStock = adjQty; }
-      else if (adjType === 'ADD')        { localItem.currentStock += adjQty; }
-      else if (adjType === 'SUBTRACT')   { localItem.currentStock = Math.max(0, localItem.currentStock - adjQty); }
+    // Always refresh from server — ledger is the single source of truth
+    try {
+      const fresh = await gasCall({ action: 'getInitData' });
+      if (fresh.ok) ITEMS = fresh.items;
+    } catch(e) {
+      // Fallback: update locally with confirmed newBalance from server
+      const localItem = ITEMS.find(i => i.name === item.name);
+      if (localItem) {
+        localItem.name = name; localItem.type = type; localItem.unit = unit;
+        localItem.minPar = par; localItem.storage = storage;
+        if (adjType && d.newBalance !== undefined) localItem.currentStock = d.newBalance;
+      }
     }
     MGMT_ITEMS = [...ITEMS];
     renderEditTable(); renderDeleteTable();
-    toast('Item updated: ' + name + (adjType ? ' — balance set to ' + (d.newBalance !== undefined ? d.newBalance : adjQty) : ''), 'success');
+    toast('Item updated: ' + name + (adjType && d.newBalance !== undefined ? ' — balance: ' + d.newBalance : ''), 'success');
     closeEditModal();
   } catch(err) { showAlert('edit-modal-alert', 'Save failed: ' + err.message, 'error'); }
   setBtn('btn-save-edit', false, '✓ Save Changes');
