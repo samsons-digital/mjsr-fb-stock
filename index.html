@@ -2314,18 +2314,25 @@ async function submitEditItem() {
     });
     if (!d.ok) throw new Error(d.error);
 
-    // Update local
+    // Use the confirmed newBalance from GAS — this is what was actually
+    // written directly to Live_Stock_Balance, so it's the ground truth.
     const localItem = ITEMS.find(i => i.name === item.name);
     if (localItem) {
-      localItem.name = name; localItem.type = type; localItem.unit = unit;
-      localItem.minPar = par; localItem.storage = storage;
-      if (adjType === 'SET')      localItem.currentStock = adjQty;
-      if (adjType === 'ADD')      localItem.currentStock += adjQty;
-      if (adjType === 'SUBTRACT') localItem.currentStock = Math.max(0, localItem.currentStock - adjQty);
+      localItem.name    = name;
+      localItem.type    = type;
+      localItem.unit    = unit;
+      localItem.minPar  = par;
+      localItem.storage = storage;
+      // If GAS returned a confirmed newBalance, use it. Otherwise calculate locally.
+      if (adjType && d.newBalance !== undefined) {
+        localItem.currentStock = d.newBalance;
+      } else if (adjType === 'SET')      { localItem.currentStock = adjQty; }
+      else if (adjType === 'ADD')        { localItem.currentStock += adjQty; }
+      else if (adjType === 'SUBTRACT')   { localItem.currentStock = Math.max(0, localItem.currentStock - adjQty); }
     }
     MGMT_ITEMS = [...ITEMS];
     renderEditTable(); renderDeleteTable();
-    toast('Item updated: ' + name, 'success');
+    toast('Item updated: ' + name + (adjType ? ' — balance set to ' + (d.newBalance !== undefined ? d.newBalance : adjQty) : ''), 'success');
     closeEditModal();
   } catch(err) { showAlert('edit-modal-alert', 'Save failed: ' + err.message, 'error'); }
   setBtn('btn-save-edit', false, '✓ Save Changes');
